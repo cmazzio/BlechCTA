@@ -1,6 +1,11 @@
 # BlechCTA
 Scripts used for Christina's Ph.D. thesis on neural mechanisms underlying learned and non-learned gaping.
 Order of operations:
+
+Initial set-up:
 1. Run each session recording through Pytau, Blech_EMG_Classifier, and BlechClust packages before running this package.
-2. Run create_tau_dict.py
-3. Run 
+2. Run create_tau_dict.py 
+3. Run combine_classifier_files.py
+4. Run initialize_dataframe.py
+
+
