@@ -93,6 +93,7 @@ for taste_name, taste_group in df_to_plot.groupby('taste_name'):
 
 # ==============================================================================
 # %% Plot all behaviors across all sessions
+# Saves behavior frequency plot (all behaviors) per animal, per session
 # ==============================================================================
 # Parameters
 # ==============================================================================
@@ -298,93 +299,161 @@ for taste_name, group in df_to_plot.groupby('taste_name'):
 # ==============================================================================
 #%% Combined plot:
 #    - Top: smoothed % of trials where cluster occurs across time
-#    - Bottom: raster of individual trials showing cluster occurrences
-# ==============================================================================
+#    - Bottom: raster of individual trials showing cluster occurrence
+# Loops through all animals, sessions, tastes
+# Saves plots to EMG_Classifier_Data folder
+
 # Parameters
-# ==============================================================================
-clusters_to_plot = [0, 1, 2]   # 0 = no movement, 1 = gapes, 2 = MTMs
-animal = 'CM46'
-taste_name = 'water'
-num_of_cta_day= 4.0
-#cluster_labels = {0: "No M.", 1: "Gape", 2: "MTM"}
+clusters_to_plot = [0, 1, 2]
+cluster_labels = {0: "No Movement", 1: "Gapes", 2: "MTMs"}
 cluster_colors = {0: '#D3D3D3', 1: '#ff9900', 2: '#4285F4'}
-window_start = 1500        # start of trial (ms)
-window_end = 5000          # end of trial (ms)
-n_bins = 1000              # number of time bins for frequency trace
-window_size = 20           # smoothing window
 
-for cluster in clusters_to_plot:
-    # Filter session data
-    session_group = df[
-        (df['animal_num'] == animal) &
-        (df['taste_name'] == taste_name) &
-        (df['num_of_cta'] == day) &
-        (df['cluster_num'].isin([cluster]))
-    ]
+window_start = 1500
+window_end = 5000
+n_bins = 1000
+window_size = 20
 
-    if session_group.empty:
-        print(f"No data for {animal}, {taste_name}, day {day}, cluster {cluster}")
-        break
-    
-    total_trials = session_group['trial'].nunique()
-    if total_trials == 0:
-        print(f"No trials for {animal}, {taste_name}, day {day}")
-        break
-    
-    # ========================
-    # Build smoothed % frequency trace
-    # ========================
-    trial_nums = sorted(session_group['trial'].unique())
-    freq_matrix = np.zeros((len(trial_nums), n_bins), dtype=bool)  # <-- bool, not float
-    
-    for i_trial, trial_num in enumerate(trial_nums):
-        trial_events = session_group[session_group['trial'] == trial_num]
-        for _, row in trial_events.iterrows():
-            start, end = row['segment_bounds']
-            start = max(start, window_start)
-            end = min(end, window_end)
-            freq_matrix[i_trial, :] |= ((time_bins >= start) & (time_bins <= end))
-    
-    # Sum across trials and convert to %
-    freq_trace = freq_matrix.sum(axis=0).astype(float)
-    freq_pct = (freq_trace / len(trial_nums)) * 100
-    freq_trace_smoothed = np.convolve(freq_pct, np.ones(window_size)/window_size, mode='same')
-    
-    # ========================
-    # Create figure with 2 subplots
-    # ========================
-    fig, (ax_top, ax_bottom) = plt.subplots(
-        2, 1,
-        figsize=(10, 4 + 0.3*total_trials),  # height scaled by number of trials
-        gridspec_kw={'height_ratios': [1, total_trials/10 + 1]}  # top smaller, bottom larger
-    )
-    
-    # Top: smoothed % frequency
-    ax_top.step(time_bins, freq_trace_smoothed, color='black', linewidth=3)
-    ax_top.set_ylabel('% Trials')
-    ax_top.set_xlim(window_start, window_end)
-    ax_top.set_ylim(0, 100)
-    ax_top.set_title(f'Cluster {cluster} - {animal} - {taste_name} - CTA {day}')
-    ax_top.axvline(2000, color='r', linestyle='--')
-    
-    # Bottom: raster plot
-    cluster_events = session_group.copy()
-    for trial_num, trial_group in cluster_events.groupby('trial'):
-        for _, row in trial_group.iterrows():
-            start, end = row['segment_bounds']
-            start = max(start, window_start)
-            end = min(end, window_end)
-            ax_bottom.broken_barh([(start, end-start)], (trial_num-0.4, 0.8), 
-                                  facecolor=cluster_colors.get(cluster, 'black'),
-                                  )
-    ax_bottom.axvline(2000, color='r', linestyle='--')
-    ax_bottom.set_ylim(0.5, total_trials+0.5)
-    ax_bottom.set_xlim(window_start, window_end)
-    ax_bottom.set_xlabel('Time (ms)')
-    ax_bottom.set_ylabel('Trial #')
-    
-    plt.tight_layout()
-    plt.show()
+combined_plot_dir = os.path.join(sub_dir, "combined_cluster_plots")
+os.makedirs(combined_plot_dir, exist_ok=True)
+
+# Filter dataframe same as first section
+if filter_licl_conc is not None:
+    df_to_plot = df[df['licl_conc'] == filter_licl_conc].copy()
+else:
+    df_to_plot = df.copy()
+
+time_bins = np.linspace(window_start, window_end, n_bins)
+
+# ==============================================================================
+# Loop automatically over taste → animal → day → cluster
+# ==============================================================================
+
+for taste_name, taste_group in df_to_plot.groupby('taste_name'):
+
+    for animal, animal_group in taste_group.groupby('animal_num'):
+
+        days = sorted([d for d in animal_group['num_of_cta'].unique() if pd.notna(d)])
+
+        for day in days:
+
+            session_group = animal_group[
+                animal_group['num_of_cta'] == day
+            ]
+
+            if session_group.empty:
+                continue
+
+            total_trials = session_group['trial'].nunique()
+            if total_trials == 0:
+                continue
+
+            trial_nums = sorted(session_group['trial'].unique())
+
+            # ======================================================
+            # Loop over clusters (one figure per cluster)
+            # ======================================================
+            for cluster in clusters_to_plot:
+
+                cluster_group = session_group[
+                    session_group['cluster_num'] == cluster
+                ]
+
+                if cluster_group.empty:
+                    continue
+
+                # -----------------------------
+                # Build frequency matrix
+                # -----------------------------
+                freq_matrix = np.zeros((len(trial_nums), n_bins), dtype=bool)
+
+                for i_trial, trial_num in enumerate(trial_nums):
+                    trial_events = cluster_group[
+                        cluster_group['trial'] == trial_num
+                    ]
+
+                    for _, row in trial_events.iterrows():
+                        start, end = row['segment_bounds']
+                        start = max(start, window_start)
+                        end = min(end, window_end)
+                        freq_matrix[i_trial, :] |= (
+                            (time_bins >= start) & (time_bins <= end)
+                        )
+
+                freq_trace = freq_matrix.sum(axis=0).astype(float)
+                freq_pct = (freq_trace / len(trial_nums)) * 100
+                freq_trace_smoothed = np.convolve(
+                    freq_pct,
+                    np.ones(window_size)/window_size,
+                    mode='same'
+                )
+
+                # ======================================================
+                # Create figure
+                # ======================================================
+                fig, (ax_top, ax_bottom) = plt.subplots(
+                    2, 1,
+                    figsize=(10, 4 + 0.3*total_trials),
+                    gridspec_kw={'height_ratios': [1, total_trials/10 + 1]}
+                )
+
+                # -----------------------------
+                # TOP: Frequency trace
+                # -----------------------------
+                ax_top.step(
+                    time_bins,
+                    freq_trace_smoothed,
+                    color=cluster_colors.get(cluster, 'black'),
+                    linewidth=3,
+                    where='mid'
+                )
+
+                ax_top.set_ylabel('% Trials')
+                ax_top.set_xlim(window_start, window_end)
+                ax_top.set_ylim(0, 100)
+                ax_top.axvline(2000, color='r', linestyle='--')
+
+                ax_top.set_title(
+                    f"{cluster_labels.get(cluster)} | "
+                    f"{animal} | {taste_name} | CTA {day}"
+                )
+
+                # -----------------------------
+                # BOTTOM: Raster
+                # -----------------------------
+                for trial_num, trial_group in cluster_group.groupby('trial'):
+                    for _, row in trial_group.iterrows():
+                        start, end = row['segment_bounds']
+                        start = max(start, window_start)
+                        end = min(end, window_end)
+
+                        ax_bottom.broken_barh(
+                            [(start, end-start)],
+                            (trial_num-0.4, 0.8),
+                            facecolor=cluster_colors.get(cluster, 'black')
+                        )
+
+                ax_bottom.axvline(2000, color='r', linestyle='--')
+                ax_bottom.set_ylim(0.5, total_trials + 0.5)
+                ax_bottom.set_xlim(window_start, window_end)
+                ax_bottom.set_xlabel('Time (ms)')
+                ax_bottom.set_ylabel('Trial #')
+
+                plt.tight_layout()
+
+                # -----------------------------
+                # Save
+                # -----------------------------
+                save_name = (
+                    f"{animal}_{taste_name}_CTA{day}_"
+                    f"{cluster_labels.get(cluster)}.png"
+                )
+
+                save_path = os.path.join(combined_plot_dir, save_name)
+                plt.savefig(save_path)
+                plt.close(fig)
+
+                print(f"Saved combined plot: {save_name}")
+
 
 
 #%% Save behavior frequency artifacts for each session
@@ -541,14 +610,6 @@ for animal, artifact in all_animal_artifacts.items():
     with open(artifact_path, 'wb') as f:
         pickle.dump(artifact, f)
     print(f"saved artifact for animal {animal}")
-
-
-
-
-
-
-
-
 
 
 
